@@ -1,0 +1,14 @@
+# Verified 2026-09-07 on macOS arm64, Python 3.13.15.
+#
+# SYSTEM DEPENDENCY: ffmpeg must be on PATH. It is not a Python package and
+# pip will not install it. iTunes previews are .m4a and Essentia needs them
+# decoded to mono 16 kHz wav. Without it both notebooks fail immediately with
+# FileNotFoundError: [Errno 2] No such file or directory: 'ffmpeg'.
+#     macOS:  brew install ffmpeg
+#     Debian: apt install ffmpeg
+essentia-tensorflow==2.1b6.dev1389
+pandas==3.0.5
+numpy==2.5.3
+matplotlib==3.11.1
+seaborn==0.13.2
+scikit-learn==1.9.0
