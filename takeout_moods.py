@@ -205,12 +205,42 @@ def itunes_search(artist: str, title: str, limit: int = 5, timeout: int = 20):
     with urllib.request.urlopen(url, timeout=timeout) as r:
         return json.load(r).get("results", [])
 
+def _tokens(s: str) -> set:
+    return set(re.findall(r"[a-z0-9]+", s.lower()))
+
+
 def score_candidate(artist: str, title: str, cand: dict) -> float:
-    want = _match_key(artist, title)
-    got = _match_key(cand.get("artistName", ""), cand.get("trackName", ""))
-    if not want or not got:
+    """Similarity of an iTunes candidate to the wanted (artist, title).
+
+    Artist and title are scored separately rather than as one concatenated
+    key. iTunes credits every collaborator in `artistName` ("Daft Punk,
+    Pharrell Williams & Nile Rodgers") where a Takeout row carries only the
+    primary artist, so a single combined ratio penalises the *correct* match
+    for being more fully credited — badly enough that a remix can outrank it.
+    Scoring the fields apart, and treating a subset artist credit as a match
+    rather than a partial one, removes that failure mode.
+
+    Title carries more weight than artist: the artist is usually already
+    constrained by the search query, whereas the title is what distinguishes
+    the original from a remix, a live cut or an edit.
+    """
+    a_want, t_want = normalize_artist(artist), normalize_title(title)
+    a_got = normalize_artist(cand.get("artistName", ""))
+    t_got = normalize_title(cand.get("trackName", ""))
+    if not (a_want and t_want) or not (a_got and t_got):
         return 0.0
-    return difflib.SequenceMatcher(None, want, got).ratio()
+
+    def _clean(s: str) -> str:
+        return re.sub(r"[^a-z0-9 ]", "", s.lower()).strip()
+
+    def _ratio(x: str, y: str) -> float:
+        return difflib.SequenceMatcher(None, _clean(x), _clean(y)).ratio()
+
+    aw, ag = _tokens(a_want), _tokens(a_got)
+    a_score = 1.0 if aw and aw <= ag else _ratio(a_want, a_got)
+    t_score = _ratio(t_want, t_got)
+    return 0.4 * a_score + 0.6 * t_score
+
 
 def match_track(artist: str, title: str, threshold: float = 0.72,
                  retries: int = 3, pause: float = 0.4) -> dict:
@@ -271,6 +301,15 @@ def fetch_preview(preview_url: str, track_id, audio_dir: str) -> str:
     wav = os.path.join(audio_dir, f"{track_id}.wav")
     if not os.path.exists(wav):
         urllib.request.urlretrieve(preview_url, m4a)
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", m4a,
-                         "-ac", "1", "-ar", "16000", wav], check=True, timeout=60)
+        try:
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", m4a,
+                            "-ac", "1", "-ar", "16000", wav],
+                           check=True, timeout=60, stdin=subprocess.DEVNULL)
+        except FileNotFoundError:
+            raise RuntimeError(
+                "ffmpeg is not on PATH. It is a system dependency, not a pip "
+                "package: iTunes previews are .m4a and Essentia needs mono "
+                "16 kHz wav. Install it with `brew install ffmpeg` (macOS) or "
+                "`apt install ffmpeg` (Debian), then re-run."
+            ) from None
     return wav
